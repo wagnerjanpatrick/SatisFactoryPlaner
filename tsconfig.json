@@ -1,0 +1,3 @@
+{
+  "extends": "@SatisFactoryPlaner/config/tsconfig.base.json"
+}
