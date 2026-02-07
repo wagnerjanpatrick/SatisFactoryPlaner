@@ -257,6 +257,11 @@ export function analyzeFlow(
 					}
 				}
 
+				const unknownDemandPorts = connectedOutputs.filter(
+					(p) => !portDemands.has(p.id),
+				);
+				const allHaveDemands = unknownDemandPorts.length === 0;
+
 				for (const port of outputPorts) {
 					const key = `${instanceId}:${port.id}`;
 					const isConnected = outgoing.some(
@@ -265,9 +270,23 @@ export function analyzeFlow(
 					let rate: number;
 					if (!isConnected) {
 						rate = 0;
-					} else if (totalDemand > 0 && portDemands.has(port.id)) {
-						// Demand-proportional distribution
+					} else if (allHaveDemands && totalDemand > 0) {
+						// All outputs have recipe demands — proportional split
 						rate = totalInput * (portDemands.get(port.id)! / totalDemand);
+					} else if (
+						unknownDemandPorts.length > 0 &&
+						totalDemand > 0 &&
+						totalDemand <= totalInput
+					) {
+						// Some outputs lack demands but known demand fits within input:
+						// give known-demand ports their exact demand, split remainder to unknown
+						if (portDemands.has(port.id)) {
+							rate = portDemands.get(port.id)!;
+						} else {
+							rate =
+								(totalInput - totalDemand) /
+								unknownDemandPorts.length;
+						}
 					} else {
 						// Fallback to even split
 						rate =
