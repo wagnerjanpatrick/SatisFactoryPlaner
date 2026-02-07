@@ -9,14 +9,6 @@ import { PIXELS_PER_METER } from "./constants";
  * nodeOrigin defaults to [0, 0] so position IS the top-left corner.
  */
 export function buildingToNode(building: PlacedBuilding): BuildingNode {
-	const def = getBuildingDef(building.buildingId);
-	const { width, length } = def
-		? getRotatedSize(def, building.rotation)
-		: { width: 0, length: 0 };
-
-	const pxWidth = width * PIXELS_PER_METER;
-	const pxHeight = length * PIXELS_PER_METER;
-
 	return {
 		id: building.instanceId,
 		type: "building",
@@ -24,8 +16,6 @@ export function buildingToNode(building: PlacedBuilding): BuildingNode {
 			x: building.x * PIXELS_PER_METER,
 			y: building.y * PIXELS_PER_METER,
 		},
-		width: pxWidth,
-		height: pxHeight,
 		data: {
 			buildingId: building.buildingId,
 			rotation: building.rotation,

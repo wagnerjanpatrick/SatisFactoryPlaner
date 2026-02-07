@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, type DragEvent } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, type DragEvent } from "react";
 import {
 	ReactFlow,
 	Background,
@@ -19,7 +19,6 @@ import {
 	type Edge,
 	type OnSelectionChangeFunc,
 	type OnNodeDrag,
-	type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -60,8 +59,7 @@ export default function FlowEditor() {
 	const { screenToFlowPosition } = useReactFlow();
 	const updateNodeInternals = useUpdateNodeInternals();
 
-	// Zustand stores
-	const buildings = useBuildingStore((s) => s.buildings);
+	// Zustand store actions only (no reactive state subscriptions that would re-render)
 	const addBuilding = useBuildingStore((s) => s.addBuilding);
 	const moveBuilding = useBuildingStore((s) => s.moveBuilding);
 	const removeBuildings = useBuildingStore((s) => s.removeBuildings);
@@ -69,7 +67,6 @@ export default function FlowEditor() {
 	const setRecipe = useBuildingStore((s) => s.setRecipe);
 	const setOverclock = useBuildingStore((s) => s.setOverclock);
 
-	const connections = useConnectionStore((s) => s.connections);
 	const addConnection = useConnectionStore((s) => s.addConnection);
 	const removeConnection = useConnectionStore((s) => s.removeConnection);
 	const removeConnectionsForBuilding = useConnectionStore(
@@ -87,12 +84,11 @@ export default function FlowEditor() {
 	const setHighlightedEdgeIds = useUIStore((s) => s.setHighlightedEdgeIds);
 
 	// React Flow node/edge state
-	const [nodes, setNodes, defaultOnNodesChange] = useNodesState<BuildingNodeType>([]);
+	const [nodes, setNodes, onNodesChange] = useNodesState<BuildingNodeType>([]);
 	const [edges, setEdges, onEdgesChange] = useEdgesState<ConnectionEdge>([]);
 
 	// Track whether we're the ones causing the store update (to avoid echo loops)
 	const isSyncingRef = useRef(false);
-	const mountedRef = useRef(false);
 	const isDraggingRef = useRef(false);
 
 	// State for "drag connection to empty space → search popup"
@@ -109,7 +105,6 @@ export default function FlowEditor() {
 	const [quickAddOpen, setQuickAddOpen] = useState(false);
 
 	// Snap helper: snaps left-edge X to grid, handle-center Y to grid.
-	// This ensures handles of different-height buildings align horizontally.
 	const snapToHandleGrid = useCallback(
 		(topLeftX: number, topLeftY: number, buildingId: string, rotation: 0 | 90 | 180 | 270) => {
 			const snapPx = gridSnapSize * PIXELS_PER_METER;
@@ -126,44 +121,96 @@ export default function FlowEditor() {
 		[gridSnapSize],
 	);
 
-	// Custom onNodesChange: intercept position changes to snap handle-center Y to grid
-	const onNodesChange = useCallback(
-		(changes: NodeChange<BuildingNodeType>[]) => {
-			const modified = changes.map((change) => {
-				if (change.type === "position" && change.position) {
-					const building = buildings[change.id];
-					if (building) {
-						const snapped = snapToHandleGrid(
-							change.position.x,
-							change.position.y,
-							building.buildingId,
-							building.rotation,
-						);
-						return { ...change, position: snapped };
-					}
-				}
-				return change;
-			});
-			defaultOnNodesChange(modified);
-		},
-		[defaultOnNodesChange, buildings, snapToHandleGrid],
+	// Snap grid for React Flow's built-in snapping (pixels)
+	const snapGridValue: [number, number] = useMemo(
+		() => [gridSnapSize * PIXELS_PER_METER, gridSnapSize * PIXELS_PER_METER],
+		[gridSnapSize],
 	);
 
-	// Sync Zustand buildings → React Flow nodes
+	// Sync Zustand buildings → React Flow nodes via store subscription (no component re-render)
 	useEffect(() => {
-		if (isSyncingRef.current) return;
-		setNodes(Object.values(buildings).map(buildingToNode));
-	}, [buildings, setNodes]);
+		let prevBuildings: Record<string, PlacedBuilding> = {};
 
-	// Sync Zustand connections → React Flow edges
-	useEffect(() => {
-		if (isSyncingRef.current) return;
-		setEdges(Object.values(connections).map(connectionToEdge));
-	}, [connections, setEdges]);
+		// Initial sync
+		const initial = useBuildingStore.getState().buildings;
+		if (Object.keys(initial).length > 0) {
+			setNodes(Object.values(initial).map(buildingToNode));
+			prevBuildings = initial;
+		}
 
+		const unsubscribe = useBuildingStore.subscribe((state) => {
+			if (isSyncingRef.current) return;
+
+			const curr = state.buildings;
+			const prev = prevBuildings;
+			prevBuildings = curr;
+
+			if (prev === curr) return;
+
+			const prevIds = new Set(Object.keys(prev));
+			const currIds = new Set(Object.keys(curr));
+
+			// Added — append to existing array, keeping existing node references intact
+			const added: BuildingNodeType[] = [];
+			for (const id of currIds) {
+				if (!prevIds.has(id)) {
+					added.push(buildingToNode(curr[id]));
+				}
+			}
+			if (added.length > 0) {
+				setNodes((nds) => nds.concat(added));
+			}
+
+			// Removed
+			const removedIds: string[] = [];
+			for (const id of prevIds) {
+				if (!currIds.has(id)) {
+					removedIds.push(id);
+				}
+			}
+			if (removedIds.length > 0) {
+				const removedSet = new Set(removedIds);
+				setNodes((nds) => nds.filter((n) => !removedSet.has(n.id)));
+			}
+
+			// Changed — only update nodes whose store object actually changed
+			const changedIds: string[] = [];
+			for (const id of currIds) {
+				if (!prevIds.has(id)) continue;
+				if (prev[id] !== curr[id]) {
+					changedIds.push(id);
+				}
+			}
+			if (changedIds.length > 0) {
+				const changedSet = new Set(changedIds);
+				setNodes((nds) =>
+					nds.map((n) => {
+						if (!changedSet.has(n.id)) return n;
+						const converted = buildingToNode(curr[n.id]);
+						return { ...n, position: converted.position, data: converted.data };
+					}),
+				);
+			}
+		});
+
+		return unsubscribe;
+	}, [setNodes]);
+
+	// Sync Zustand connections → React Flow edges via store subscription
 	useEffect(() => {
-		mountedRef.current = true;
-	}, []);
+		// Initial sync
+		const initial = useConnectionStore.getState().connections;
+		if (Object.keys(initial).length > 0) {
+			setEdges(Object.values(initial).map(connectionToEdge));
+		}
+
+		const unsubscribe = useConnectionStore.subscribe((state) => {
+			if (isSyncingRef.current) return;
+			setEdges(Object.values(state.connections).map(connectionToEdge));
+		});
+
+		return unsubscribe;
+	}, [setEdges]);
 
 	// --- Clipboard for copy/paste ---
 	const clipboardRef = useRef<PlacedBuilding[]>([]);
@@ -185,11 +232,7 @@ export default function FlowEditor() {
 				for (const sid of idsToRotate) {
 					rotateBuilding(sid);
 				}
-				// Tell React Flow to re-measure handle positions (uses RAF internally)
 				updateNodeInternals(idsToRotate);
-				// After handles are measured, force a full node refresh so edges
-				// pick up the updated handle bounds. Then re-measure once more
-				// from the final DOM to ensure perfect alignment.
 				setTimeout(() => {
 					isSyncingRef.current = true;
 					const b = useBuildingStore.getState().buildings;
@@ -224,7 +267,6 @@ export default function FlowEditor() {
 				e.preventDefault();
 				pushSnapshot();
 
-				// Offset pasted buildings by 2 meters
 				const PASTE_OFFSET = 2;
 				const newIds: string[] = [];
 				for (const b of copied) {
@@ -234,7 +276,6 @@ export default function FlowEditor() {
 						b.y + PASTE_OFFSET,
 						b.rotation,
 					);
-					// Copy recipe and overclock
 					if (b.recipeId) setRecipe(newId, b.recipeId);
 					if (b.overclockPercent !== 100) setOverclock(newId, b.overclockPercent);
 					newIds.push(newId);
@@ -254,13 +295,14 @@ export default function FlowEditor() {
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [pushSnapshot, rotateBuilding, addBuilding, setRecipe, setOverclock, setSelectedInstances, setNodes, updateNodeInternals, setEdges]);
 
-	// --- Connection validation ---
+	// --- Connection validation (uses getState, stable callback) ---
 	const isValidConnection: IsValidConnection = useCallback(
 		(connection) => {
 			const { source, target, sourceHandle, targetHandle } = connection;
 			if (!source || !target || !sourceHandle || !targetHandle) return false;
 			if (source === target) return false;
 
+			const buildings = useBuildingStore.getState().buildings;
 			const sourceBuilding = buildings[source];
 			const targetBuilding = buildings[target];
 			if (!sourceBuilding || !targetBuilding) return false;
@@ -277,14 +319,13 @@ export default function FlowEditor() {
 				return false;
 			if (sourcePort.type !== targetPort.type) return false;
 
-			// Max 1 connection per input port
+			const connections = useConnectionStore.getState().connections;
 			const inputAlreadyConnected = Object.values(connections).some(
 				(c) =>
 					c.targetInstanceId === target && c.targetPortId === targetHandle,
 			);
 			if (inputAlreadyConnected) return false;
 
-			// Max 1 connection per output port
 			const outputAlreadyConnected = Object.values(connections).some(
 				(c) =>
 					c.sourceInstanceId === source && c.sourcePortId === sourceHandle,
@@ -293,10 +334,10 @@ export default function FlowEditor() {
 
 			return true;
 		},
-		[buildings, connections],
+		[],
 	);
 
-	// --- Handle new connection ---
+	// --- Handle new connection (uses getState, stable callback) ---
 	const onConnect: OnConnect = useCallback(
 		(params) => {
 			if (
@@ -307,6 +348,7 @@ export default function FlowEditor() {
 			)
 				return;
 
+			const buildings = useBuildingStore.getState().buildings;
 			const sourceBuilding = buildings[params.source];
 			const sourceDef = sourceBuilding
 				? getBuildingDef(sourceBuilding.buildingId)
@@ -326,7 +368,7 @@ export default function FlowEditor() {
 				portType,
 			);
 		},
-		[buildings, pushSnapshot, addConnection],
+		[pushSnapshot, addConnection],
 	);
 
 	// --- Drag & drop from sidebar ---
@@ -352,7 +394,6 @@ export default function FlowEditor() {
 				y: event.clientY,
 			});
 
-			// Drop point ≈ center; compute top-left then snap handle-center to grid
 			const snapped = snapToHandleGrid(
 				position.x - pxWidth / 2,
 				position.y - pxHeight / 2,
@@ -379,7 +420,7 @@ export default function FlowEditor() {
 		[setFocusedInstance],
 	);
 
-	// --- Sync drag position back to store (already top-left, already snapped by onNodesChange) ---
+	// --- Sync drag position back to store ---
 	const onNodeDragStop: OnNodeDrag = useCallback(
 		(_event, node) => {
 			isSyncingRef.current = true;
@@ -422,13 +463,12 @@ export default function FlowEditor() {
 		[pushSnapshot, removeConnection],
 	);
 
-	// --- Selection sync + full chain highlight ---
+	// --- Selection sync + full chain highlight (uses getState, stable callback) ---
 	const onSelectionChange: OnSelectionChangeFunc = useCallback(
 		({ nodes: selectedNodes }) => {
 			const selectedIds = selectedNodes.map((n) => n.id);
 			const prevIds = useUIStore.getState().selectedInstanceIds;
 
-			// Only set focus on click, not during/after drag
 			if (!isDraggingRef.current) {
 				if (selectedIds.length === 1) {
 					setFocusedInstance(selectedIds[0]!);
@@ -446,8 +486,7 @@ export default function FlowEditor() {
 				return;
 			}
 
-			// BFS: walk the full connected component from selected nodes
-			const conns = Object.values(connections);
+			const conns = Object.values(useConnectionStore.getState().connections);
 			const visited = new Set<string>(selectedIds);
 			const queue = [...selectedIds];
 
@@ -465,37 +504,34 @@ export default function FlowEditor() {
 				}
 			}
 
-			// All edges where both endpoints are in the connected component
 			const edgeIds = conns
 				.filter((c) => visited.has(c.sourceInstanceId) && visited.has(c.targetInstanceId))
 				.map((c) => c.id);
 
 			setHighlightedEdgeIds(edgeIds);
 		},
-		[setSelectedInstances, setFocusedInstance, setHighlightedEdgeIds, connections],
+		[setSelectedInstances, setFocusedInstance, setHighlightedEdgeIds],
 	);
 
 	// --- Track focused (last-clicked) node for panel display ---
 	const onNodeClick = useCallback(
 		(_event: React.MouseEvent, node: Node) => {
-			// Don't set focus if we just finished dragging
 			if (isDraggingRef.current) return;
 			setFocusedInstance(node.id);
 		},
 		[setFocusedInstance],
 	);
 
-	// --- Connection dropped on empty space → show search popup ---
+	// --- Connection dropped on empty space → show search popup (uses getState) ---
 	const onConnectEnd: OnConnectEnd = useCallback(
 		(event, connectionState) => {
-			// Only trigger if the connection was NOT completed (dropped on empty space)
 			if (connectionState.isValid) return;
 
 			const fromHandle = connectionState.fromHandle;
 			const fromNode = connectionState.fromNode;
 			if (!fromHandle?.id || !fromNode) return;
 
-			// Get the source port info
+			const buildings = useBuildingStore.getState().buildings;
 			const building = buildings[fromNode.id];
 			if (!building) return;
 			const def = getBuildingDef(building.buildingId);
@@ -503,7 +539,6 @@ export default function FlowEditor() {
 			const port = def.ports.find((p) => p.id === fromHandle.id);
 			if (!port) return;
 
-			// Get screen position from the event
 			const clientX = "clientX" in event ? event.clientX : event.touches?.[0]?.clientX ?? 0;
 			const clientY = "clientY" in event ? event.clientY : event.touches?.[0]?.clientY ?? 0;
 
@@ -518,7 +553,7 @@ export default function FlowEditor() {
 				portDirection: port.direction,
 			});
 		},
-		[buildings, screenToFlowPosition],
+		[screenToFlowPosition],
 	);
 
 	// --- Handle building selection from search popup ---
@@ -547,7 +582,6 @@ export default function FlowEditor() {
 				snapped.y / PIXELS_PER_METER,
 			);
 
-			// Find the first compatible port on the new building
 			const needDirection: PortDirection = portDirection === "output" ? "input" : "output";
 			const targetPort = def.ports.find(
 				(p) => p.type === portType && p.direction === needDirection,
@@ -572,7 +606,6 @@ export default function FlowEditor() {
 			const def = getBuildingDef(buildingId);
 			if (!def) return;
 
-			// Get the center of the viewport in flow coordinates
 			const canvasEl = document.querySelector(".react-flow") as HTMLElement | null;
 			const rect = canvasEl?.getBoundingClientRect();
 			const centerX = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
@@ -622,6 +655,8 @@ export default function FlowEditor() {
 				onNodeClick={onNodeClick}
 				onSelectionChange={onSelectionChange}
 				defaultEdgeOptions={defaultEdgeOptions}
+				snapToGrid
+				snapGrid={snapGridValue}
 				deleteKeyCode={["Delete", "Backspace"]}
 				multiSelectionKeyCode="Shift"
 				colorMode="dark"

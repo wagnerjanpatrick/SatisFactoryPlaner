@@ -41,13 +41,11 @@ const STATUS_COLORS: Record<string, { border: string; shadow: string } | undefin
 function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<BuildingNodeType>) {
 	const def = getBuildingDef(data.buildingId);
 	const { deleteElements } = useReactFlow();
-	const buildings = useBuildingStore((s) => s.buildings);
 	const setRecipe = useBuildingStore((s) => s.setRecipe);
 	const setOverclock = useBuildingStore((s) => s.setOverclock);
 	const setSourceItem = useBuildingStore((s) => s.setSourceItem);
 	const setSourceRate = useBuildingStore((s) => s.setSourceRate);
 	const pushSnapshot = useHistoryStore((s) => s.pushSnapshot);
-	const selectedIds = useUIStore((s) => s.selectedInstanceIds);
 	const focusedId = useUIStore((s) => s.focusedInstanceId);
 	const setHoveredInstance = useUIStore((s) => s.setHoveredInstance);
 	const isFocused = focusedId === id;
@@ -111,14 +109,16 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 		(value: string) => {
 			pushSnapshot();
 			const recipeId = value === "__none__" ? undefined : value;
-			for (const sid of selectedIds) {
-				const b = buildings[sid];
+			const allBuildings = useBuildingStore.getState().buildings;
+			const currentSelectedIds = useUIStore.getState().selectedInstanceIds;
+			for (const sid of currentSelectedIds) {
+				const b = allBuildings[sid];
 				if (b && b.buildingId === data.buildingId) {
 					setRecipe(sid, recipeId);
 				}
 			}
 		},
-		[pushSnapshot, selectedIds, buildings, data.buildingId, setRecipe],
+		[pushSnapshot, data.buildingId, setRecipe],
 	);
 
 	// Apply overclock to all selected buildings that support it
@@ -127,8 +127,10 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 			const v = values[0];
 			if (v === undefined) return;
 			pushSnapshot();
-			for (const sid of selectedIds) {
-				const b = buildings[sid];
+			const allBuildings = useBuildingStore.getState().buildings;
+			const currentSelectedIds = useUIStore.getState().selectedInstanceIds;
+			for (const sid of currentSelectedIds) {
+				const b = allBuildings[sid];
 				if (!b) continue;
 				const d = getBuildingDef(b.buildingId);
 				if (d?.canOverclock) {
@@ -136,7 +138,7 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 				}
 			}
 		},
-		[pushSnapshot, selectedIds, buildings, setOverclock],
+		[pushSnapshot, setOverclock],
 	);
 
 	// Source node callbacks
