@@ -74,3 +74,22 @@ export function getBuildingsByCategory(
 ): BuildingDefinition[] {
 	return BUILDINGS.filter((b) => b.category === category);
 }
+
+/** First non-alternate recipe that produces the given item */
+export function getDefaultRecipeForItem(
+	itemId: string,
+): RecipeDefinition | undefined {
+	return RECIPES.find(
+		(r) => !r.isAlternate && r.outputs.some((o) => o.itemId === itemId),
+	);
+}
+
+/** All recipes (including alternates) that produce the given item */
+export function getRecipesProducingItem(itemId: string): RecipeDefinition[] {
+	return RECIPES.filter((r) => r.outputs.some((o) => o.itemId === itemId));
+}
+
+/** True if no recipe produces this item (it's a raw ore/fluid) */
+export function isRawResource(itemId: string): boolean {
+	return !RECIPES.some((r) => r.outputs.some((o) => o.itemId === itemId));
+}

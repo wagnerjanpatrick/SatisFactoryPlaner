@@ -43,6 +43,7 @@ import { FloatingToolbar } from "./FloatingToolbar";
 import { SettingsOverlay } from "./SettingsOverlay";
 import { StatusOverlay } from "./StatusOverlay";
 import { useFlowAnalysis, FlowAnalysisContext } from "@/hooks/useFlowAnalysis";
+import { ProductionPlannerDialog } from "@/components/productionPlanner/ProductionPlannerDialog";
 
 const nodeTypes: NodeTypes = {
 	building: BuildingNode as unknown as NodeTypes["building"],
@@ -103,6 +104,9 @@ export default function FlowEditor() {
 
 	// State for "quick add" popup (Q key or search button)
 	const [quickAddOpen, setQuickAddOpen] = useState(false);
+
+	// State for production planner dialog
+	const [plannerOpen, setPlannerOpen] = useState(false);
 
 	// Snap helper: snaps left-edge X to grid, handle-center Y to grid.
 	const snapToHandleGrid = useCallback(
@@ -711,9 +715,28 @@ export default function FlowEditor() {
 				/>
 			)}
 			<SidebarToggle />
-			<FloatingToolbar onQuickAdd={() => setQuickAddOpen(true)} />
+			<FloatingToolbar
+				onQuickAdd={() => setQuickAddOpen(true)}
+				onProductionPlanner={() => setPlannerOpen(true)}
+			/>
 			<SettingsOverlay />
 			<StatusOverlay />
+			{plannerOpen && (
+				<ProductionPlannerDialog
+					open={plannerOpen}
+					onClose={() => setPlannerOpen(false)}
+					viewportCenter={{
+						x: screenToFlowPosition({
+							x: window.innerWidth / 2,
+							y: window.innerHeight / 2,
+						}).x / PIXELS_PER_METER,
+						y: screenToFlowPosition({
+							x: window.innerWidth / 2,
+							y: window.innerHeight / 2,
+						}).y / PIXELS_PER_METER,
+					}}
+				/>
+			)}
 		</div>
 		</FlowAnalysisContext.Provider>
 	);

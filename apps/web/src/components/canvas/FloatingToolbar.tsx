@@ -9,6 +9,7 @@ import {
 	Undo2,
 	Redo2,
 	Search,
+	TreePine,
 } from "lucide-react";
 import { Button } from "@SatisFactoryPlaner/ui/components/button";
 import { Toggle } from "@SatisFactoryPlaner/ui/components/toggle";
@@ -37,9 +38,10 @@ const TOOLS: {
 
 interface FloatingToolbarProps {
 	onQuickAdd: () => void;
+	onProductionPlanner: () => void;
 }
 
-export function FloatingToolbar({ onQuickAdd }: FloatingToolbarProps) {
+export function FloatingToolbar({ onQuickAdd, onProductionPlanner }: FloatingToolbarProps) {
 	const toolMode = useUIStore((s) => s.toolMode);
 	const setToolMode = useUIStore((s) => s.setToolMode);
 	const undo = useHistoryStore((s) => s.undo);
@@ -84,6 +86,20 @@ export function FloatingToolbar({ onQuickAdd }: FloatingToolbarProps) {
 					</Button>
 				</TooltipTrigger>
 				<TooltipContent side="top">Quick Add (Q)</TooltipContent>
+			</Tooltip>
+
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<Button
+						variant="ghost"
+						size="icon"
+						onClick={onProductionPlanner}
+						className="h-7 w-7"
+					>
+						<TreePine size={16} />
+					</Button>
+				</TooltipTrigger>
+				<TooltipContent side="top">Production Planner</TooltipContent>
 			</Tooltip>
 
 			<Separator orientation="vertical" className="mx-1 h-5" />

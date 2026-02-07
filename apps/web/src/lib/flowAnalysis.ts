@@ -160,9 +160,17 @@ export function analyzeFlow(
 			const rate = (building.sourceRate ?? 0) * mult;
 			for (const port of outputPorts) {
 				const key = `${instanceId}:${port.id}`;
-				portActual[key] = rate;
-				portDemand[key] = rate;
-				outputFlows.push({ portId: port.id, demanded: rate, actual: rate });
+				const isConnected = (outEdges[instanceId] ?? []).some(
+					(e) => e.sourcePortId === port.id,
+				);
+				if (isConnected) {
+					portActual[key] = rate;
+					portDemand[key] = rate;
+					outputFlows.push({ portId: port.id, demanded: rate, actual: rate });
+				} else {
+					portActual[key] = 0;
+					outputFlows.push({ portId: port.id, demanded: 0, actual: 0 });
+				}
 			}
 		} else if (isSink) {
 			// Sink: absorb all input, no output — demand matches supply (no upstream pressure)
@@ -216,16 +224,57 @@ export function analyzeFlow(
 				const connectedOutputs = outputPorts.filter((p) =>
 					outgoing.some((e) => e.sourcePortId === p.id),
 				);
-				const perPort =
-					connectedOutputs.length > 0
-						? totalInput / connectedOutputs.length
-						: 0;
+
+				// Compute downstream demands from target recipes for proportional split
+				let totalDemand = 0;
+				const portDemands = new Map<string, number>();
+				for (const port of connectedOutputs) {
+					const edge = outgoing.find((e) => e.sourcePortId === port.id);
+					if (edge) {
+						const targetBldg = buildings[edge.targetInstanceId];
+						if (targetBldg) {
+							const targetDef = getBuildingDef(targetBldg.buildingId);
+							const targetRecipe = targetBldg.recipeId
+								? getRecipe(targetBldg.recipeId)
+								: null;
+							if (targetRecipe && targetDef) {
+								const targetInPorts = targetDef.ports.filter(
+									(p) => p.direction === "input",
+								);
+								const pIdx = targetInPorts.findIndex(
+									(p) => p.id === edge.targetPortId,
+								);
+								const recipeIn = targetRecipe.inputs[pIdx];
+								if (recipeIn) {
+									const d =
+										recipeIn.perMinute *
+										(targetBldg.overclockPercent / 100);
+									portDemands.set(port.id, d);
+									totalDemand += d;
+								}
+							}
+						}
+					}
+				}
+
 				for (const port of outputPorts) {
 					const key = `${instanceId}:${port.id}`;
 					const isConnected = outgoing.some(
 						(e) => e.sourcePortId === port.id,
 					);
-					const rate = isConnected ? perPort : 0;
+					let rate: number;
+					if (!isConnected) {
+						rate = 0;
+					} else if (totalDemand > 0 && portDemands.has(port.id)) {
+						// Demand-proportional distribution
+						rate = totalInput * (portDemands.get(port.id)! / totalDemand);
+					} else {
+						// Fallback to even split
+						rate =
+							connectedOutputs.length > 0
+								? totalInput / connectedOutputs.length
+								: 0;
+					}
 					portActual[key] = rate;
 					outputFlows.push({ portId: port.id, demanded: 0, actual: rate });
 				}
