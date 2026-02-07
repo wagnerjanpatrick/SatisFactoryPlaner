@@ -34,8 +34,10 @@ import { useHistoryStore } from "@/store/historyStore";
 import { getBuildingDef } from "@/data";
 import type { PortType, PortDirection } from "@/data/types";
 import { buildingToNode, connectionToEdge } from "@/lib/flowConversions";
+import { getPortWorldPosition, worldToCanvas } from "@/lib/geometry";
 import { getRotatedSize } from "@/lib/geometry";
 import { PIXELS_PER_METER, GRID_SIZE, COLORS } from "@/lib/constants";
+import { findInsertIndex } from "@/lib/edgePaths";
 import { NodeSearchPopup } from "./NodeSearchPopup";
 import { QuickAddPopup } from "./QuickAddPopup";
 import { SidebarToggle } from "./SidebarToggle";
@@ -467,6 +469,44 @@ export default function FlowEditor() {
 		[pushSnapshot, removeConnection],
 	);
 
+	// --- Double-click edge to add waypoint ---
+	const onEdgeDoubleClick = useCallback(
+		(event: React.MouseEvent, edge: Edge) => {
+			const flowPos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+			const conn = useConnectionStore.getState().connections[edge.id];
+			if (!conn) return;
+
+			const buildings = useBuildingStore.getState().buildings;
+			const sourceBuilding = buildings[conn.sourceInstanceId];
+			const targetBuilding = buildings[conn.targetInstanceId];
+			if (!sourceBuilding || !targetBuilding) return;
+
+			const sourceDef = getBuildingDef(sourceBuilding.buildingId);
+			const targetDef = getBuildingDef(targetBuilding.buildingId);
+			if (!sourceDef || !targetDef) return;
+
+			const sourcePort = sourceDef.ports.find((p) => p.id === conn.sourcePortId);
+			const targetPort = targetDef.ports.find((p) => p.id === conn.targetPortId);
+			if (!sourcePort || !targetPort) return;
+
+			const sourceWorld = getPortWorldPosition(sourcePort, sourceBuilding, sourceDef);
+			const targetWorld = getPortWorldPosition(targetPort, targetBuilding, targetDef);
+			const sourceCanvas = worldToCanvas(sourceWorld.x, sourceWorld.y);
+			const targetCanvas = worldToCanvas(targetWorld.x, targetWorld.y);
+
+			const waypoints = conn.waypoints ?? [];
+			const allPoints = [sourceCanvas, ...waypoints, targetCanvas];
+			const insertIdx = findInsertIndex(flowPos, allPoints);
+
+			const newWaypoints = [...waypoints];
+			newWaypoints.splice(insertIdx, 0, { x: flowPos.x, y: flowPos.y });
+
+			pushSnapshot();
+			useConnectionStore.getState().updateWaypoints(edge.id, newWaypoints);
+		},
+		[screenToFlowPosition, pushSnapshot],
+	);
+
 	// --- Selection sync + full chain highlight (uses getState, stable callback) ---
 	const onSelectionChange: OnSelectionChangeFunc = useCallback(
 		({ nodes: selectedNodes }) => {
@@ -656,6 +696,7 @@ export default function FlowEditor() {
 				onNodeDragStop={onNodeDragStop}
 				onNodesDelete={onNodesDelete}
 				onEdgesDelete={onEdgesDelete}
+				onEdgeDoubleClick={onEdgeDoubleClick}
 				onNodeClick={onNodeClick}
 				onSelectionChange={onSelectionChange}
 				defaultEdgeOptions={defaultEdgeOptions}

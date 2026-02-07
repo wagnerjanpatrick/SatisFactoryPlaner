@@ -13,6 +13,9 @@ import { useConnectionStore } from "@/store/connectionStore";
 import { useUIStore } from "@/store/uiStore";
 import { useEdgeAnalysis } from "@/hooks/useFlowAnalysis";
 import { COLORS } from "@/lib/constants";
+import { buildWaypointPath } from "@/lib/edgePaths";
+import { useEditableEdge } from "@/hooks/useEditableEdge";
+import { WaypointHandles } from "./WaypointHandles";
 
 const EDGE_STATUS_COLORS: Record<string, string> = {
 	ok: "#22c55e",
@@ -42,15 +45,31 @@ export default function PipeEdge(props: EdgeProps<ConnectionEdge>) {
 	const highlighted = highlightedEdgeIds.includes(id);
 	const edgeAnalysis = useEdgeAnalysis(id);
 
-	const [edgePath, labelX, labelY] = getSmoothStepPath({
-		sourceX,
-		sourceY,
-		sourcePosition,
-		targetX,
-		targetY,
-		targetPosition,
-		borderRadius: 6,
-	});
+	const {
+		effectiveWaypoints,
+		onWaypointPointerDown,
+		onPointerMove,
+		onPointerUp,
+		removeWaypoint,
+	} = useEditableEdge({ edgeId: id, waypoints: data?.waypoints ?? [] });
+
+	const [edgePath, labelX, labelY] =
+		effectiveWaypoints.length > 0
+			? buildWaypointPath(
+					[{ x: sourceX, y: sourceY }, ...effectiveWaypoints, { x: targetX, y: targetY }],
+					sourcePosition,
+					targetPosition,
+					6,
+				)
+			: getSmoothStepPath({
+					sourceX,
+					sourceY,
+					sourcePosition,
+					targetX,
+					targetY,
+					targetPosition,
+					borderRadius: 6,
+				});
 
 	const currentTierId = data?.tier ?? "mk1";
 	const tier = getPipeTier(currentTierId);
@@ -166,6 +185,14 @@ export default function PipeEdge(props: EdgeProps<ConnectionEdge>) {
 					</div>
 				</EdgeLabelRenderer>
 			)}
+			<WaypointHandles
+				waypoints={effectiveWaypoints}
+				visible={!!selected}
+				onPointerDown={onWaypointPointerDown}
+				onPointerMove={onPointerMove}
+				onPointerUp={onPointerUp}
+				onRemove={removeWaypoint}
+			/>
 		</>
 	);
 }
