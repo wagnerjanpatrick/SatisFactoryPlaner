@@ -1,66 +1,80 @@
 # SatisFactoryPlaner
 
-This project was created with [Better-T-Stack](https://github.com/AmanVarshney01/create-better-t-stack), a modern TypeScript stack that combines Next.js, Convex, and more.
+A visual factory planner for Satisfactory. Design production chains on a canvas, connect buildings with conveyor belts and pipes, and get real-time throughput analysis with bottleneck detection.
 
 ## Features
 
-- **TypeScript** - For type safety and improved developer experience
-- **Next.js** - Full-stack React framework
-- **TailwindCSS** - Utility-first CSS for rapid UI development
-- **shadcn/ui** - Reusable UI components
-- **Convex** - Reactive backend-as-a-service platform
-- **Authentication** - Better-Auth
-- **Biome** - Linting and formatting
-- **Turborepo** - Optimized monorepo build system
+### Factory Editor
+- Drag-and-drop building placement on an infinite canvas
+- 48 buildings across 7 categories (source, production, logistics, power, storage, transport, special)
+- 101 items and 100+ recipes including alternate recipes
+- Conveyor belts (Mk.1-6: 60-1200 items/min) and pipes (Mk.1-2: 300-600 m3/min)
+- Building rotation (R key), copy/paste, multi-select
+- Quick-add search (Q shortcut)
 
-## Getting Started
+### Throughput Analysis
+- Real-time flow analysis with forward and backward propagation
+- **Green** nodes/edges: balanced production chain
+- **Yellow** nodes: partially starved inputs (50-99%)
+- **Red** nodes/edges: severely starved inputs (<50%) or belt overcapacity
+- **Orange** nodes: bottleneck (downstream demands more than this building can produce)
+- **Blue** nodes/edges: overproducing (output exceeds downstream consumption)
+- Belt/pipe capacity checks: edges turn red when flow exceeds tier limit
+- Storage containers and Awesome Sink act as valid chain endpoints
 
-First, install the dependencies:
+### Configurable Resource Nodes
+- Select output item and rate for source buildings
+- Filtered item lists per source type (solid for Resource Node, fluid for Resource Well)
+- Overclock slider (1-250%)
 
-```bash
-bun install
-```
+## Tech Stack
 
-## Convex Setup
-
-This project uses Convex as a backend. You'll need to set up Convex before running the app:
-
-```bash
-bun run dev:setup
-```
-
-Follow the prompts to create a new Convex project and connect it to your application.
-
-Copy environment variables from `packages/backend/.env.local` to `apps/*/.env`.
-
-Then, run the development server:
-
-```bash
-bun run dev
-```
-
-Open [http://localhost:3001](http://localhost:3001) in your browser to see the web application.
-Your app will connect to the Convex cloud backend automatically.
-
-## Git Hooks and Formatting
-
-- Format and lint fix: `bun run check`
+- **Next.js** with TypeScript
+- **React Flow** (@xyflow/react) for the canvas editor
+- **Zustand** with Immer for state management
+- **Convex** backend
+- **Better-Auth** for authentication
+- **Tailwind CSS** + shadcn/ui (Radix primitives)
+- **Turborepo** monorepo with Biome linting
 
 ## Project Structure
 
 ```
 SatisFactoryPlaner/
 ├── apps/
-│   ├── web/         # Frontend application (Next.js)
+│   └── web/                    # Next.js frontend
+│       └── src/
+│           ├── app/            # Next.js app router pages
+│           ├── components/     # React components
+│           │   └── canvas/     # Editor: FlowEditor, BuildingNode, edges
+│           ├── data/           # Buildings, items, recipes, tiers
+│           ├── hooks/          # useFlowAnalysis, custom hooks
+│           ├── lib/            # flowAnalysis engine, geometry, constants
+│           └── store/          # Zustand stores (building, connection, UI)
 ├── packages/
-│   ├── backend/     # Convex backend functions and schema
+│   ├── backend/                # Convex backend functions
+│   ├── config/                 # Shared config (TypeScript, Tailwind)
+│   ├── env/                    # Environment variable validation
+│   └── ui/                     # Shared UI components (shadcn/ui)
 ```
 
-## Available Scripts
+## Getting Started
 
-- `bun run dev`: Start all applications in development mode
-- `bun run build`: Build all applications
-- `bun run dev:web`: Start only the web application
-- `bun run dev:setup`: Setup and configure your Convex project
-- `bun run check-types`: Check TypeScript types across all apps
-- `bun run check`: Run Biome formatting and linting
+```bash
+bun install
+bun run dev:setup    # Setup Convex backend
+bun run dev          # Start dev server
+```
+
+Open [http://localhost:3001](http://localhost:3001)
+
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `bun run dev` | Start all apps in dev mode |
+| `bun run build` | Build all apps |
+| `bun run dev:web` | Start only the web app |
+| `bun run dev:server` | Start only the backend |
+| `bun run check-types` | TypeScript type checking |
+| `bun run check` | Biome lint and format |

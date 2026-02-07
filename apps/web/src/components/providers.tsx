@@ -7,7 +7,7 @@ import { ConvexReactClient } from "convex/react";
 import { authClient } from "@/lib/auth-client";
 
 import { ThemeProvider } from "./theme-provider";
-import { Toaster } from "./ui/sonner";
+import { Toaster } from "@SatisFactoryPlaner/ui/sonner";
 
 const convex = new ConvexReactClient(env.NEXT_PUBLIC_CONVEX_URL);
 

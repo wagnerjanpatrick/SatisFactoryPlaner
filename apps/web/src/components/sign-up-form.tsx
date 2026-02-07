@@ -5,9 +5,9 @@ import z from "zod";
 
 import { authClient } from "@/lib/auth-client";
 
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
+import { Button } from "@SatisFactoryPlaner/ui/components/button";
+import { Input } from "@SatisFactoryPlaner/ui/components/input";
+import { Label } from "@SatisFactoryPlaner/ui/components/label";
 
 export default function SignUpForm({ onSwitchToSignIn }: { onSwitchToSignIn: () => void }) {
   const router = useRouter();

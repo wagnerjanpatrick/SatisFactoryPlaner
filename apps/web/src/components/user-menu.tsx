@@ -10,10 +10,10 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@SatisFactoryPlaner/ui/components/dropdown-menu";
 import { authClient } from "@/lib/auth-client";
 
-import { Button } from "./ui/button";
+import { Button } from "@SatisFactoryPlaner/ui/components/button";
 
 export default function UserMenu() {
   const router = useRouter();
@@ -21,7 +21,9 @@ export default function UserMenu() {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="outline" />}>{user?.name}</DropdownMenuTrigger>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline">{user?.name}</Button>
+      </DropdownMenuTrigger>
       <DropdownMenuContent className="bg-card">
         <DropdownMenuGroup>
           <DropdownMenuLabel>My Account</DropdownMenuLabel>

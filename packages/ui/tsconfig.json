@@ -1,0 +1,16 @@
+{
+  "extends": "@strave/ts-config/react-library.json",
+  "compilerOptions": {
+    "paths": {
+      "*": ["./*"],
+      "@strave/ui/*": ["./src/*"],
+      "@/lib/*": ["./src/lib/*"],
+      "@/hooks/*": ["./src/hooks/*"],
+      "@/components/*": ["./src/components/*"],
+      "@/styles/*": ["./src/styles/*"]
+    },
+    "strictNullChecks": true
+  },
+  "include": ["."],
+  "exclude": ["node_modules", "dist"]
+}
