@@ -35,7 +35,7 @@ export const useUIStore = create<UIStoreState>()(
 		panX: 0,
 		panY: 0,
 		showGrid: true,
-		gridSnapSize: 8,
+		gridSnapSize: 1,
 		sidebarTab: "build",
 		sidebarOpen: true,
 		show3DPreview: false,

@@ -19,6 +19,7 @@ import {
 	type Edge,
 	type OnSelectionChangeFunc,
 	type OnNodeDrag,
+	type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -86,7 +87,7 @@ export default function FlowEditor() {
 	const setHighlightedEdgeIds = useUIStore((s) => s.setHighlightedEdgeIds);
 
 	// React Flow node/edge state
-	const [nodes, setNodes, onNodesChange] = useNodesState<BuildingNodeType>([]);
+	const [nodes, setNodes, defaultOnNodesChange] = useNodesState<BuildingNodeType>([]);
 	const [edges, setEdges, onEdgesChange] = useEdgesState<ConnectionEdge>([]);
 
 	// Track whether we're the ones causing the store update (to avoid echo loops)
@@ -106,6 +107,47 @@ export default function FlowEditor() {
 
 	// State for "quick add" popup (Q key or search button)
 	const [quickAddOpen, setQuickAddOpen] = useState(false);
+
+	// Snap helper: snaps left-edge X to grid, handle-center Y to grid.
+	// This ensures handles of different-height buildings align horizontally.
+	const snapToHandleGrid = useCallback(
+		(topLeftX: number, topLeftY: number, buildingId: string, rotation: 0 | 90 | 180 | 270) => {
+			const snapPx = gridSnapSize * PIXELS_PER_METER;
+			const def = getBuildingDef(buildingId);
+			const { length } = def
+				? getRotatedSize(def, rotation)
+				: { length: 0 };
+			const pxHeight = length * PIXELS_PER_METER;
+			const handleCenterY = topLeftY + pxHeight / 2;
+			const snappedHandleY = Math.round(handleCenterY / snapPx) * snapPx;
+			const snappedX = Math.round(topLeftX / snapPx) * snapPx;
+			return { x: snappedX, y: snappedHandleY - pxHeight / 2 };
+		},
+		[gridSnapSize],
+	);
+
+	// Custom onNodesChange: intercept position changes to snap handle-center Y to grid
+	const onNodesChange = useCallback(
+		(changes: NodeChange<BuildingNodeType>[]) => {
+			const modified = changes.map((change) => {
+				if (change.type === "position" && change.position) {
+					const building = buildings[change.id];
+					if (building) {
+						const snapped = snapToHandleGrid(
+							change.position.x,
+							change.position.y,
+							building.buildingId,
+							building.rotation,
+						);
+						return { ...change, position: snapped };
+					}
+				}
+				return change;
+			});
+			defaultOnNodesChange(modified);
+		},
+		[defaultOnNodesChange, buildings, snapToHandleGrid],
+	);
 
 	// Sync Zustand buildings → React Flow nodes
 	useEffect(() => {
@@ -302,28 +344,30 @@ export default function FlowEditor() {
 			if (!buildingId) return;
 
 			const def = getBuildingDef(buildingId);
-			const width = def?.width ?? 0;
-			const length = def?.length ?? 0;
+			const pxWidth = (def?.width ?? 0) * PIXELS_PER_METER;
+			const pxHeight = (def?.length ?? 0) * PIXELS_PER_METER;
 
 			const position = screenToFlowPosition({
 				x: event.clientX,
 				y: event.clientY,
 			});
 
-			// Snap the center position to grid
-			const snapPx = gridSnapSize * PIXELS_PER_METER;
-			position.x = Math.round(position.x / snapPx) * snapPx;
-			position.y = Math.round(position.y / snapPx) * snapPx;
+			// Drop point ≈ center; compute top-left then snap handle-center to grid
+			const snapped = snapToHandleGrid(
+				position.x - pxWidth / 2,
+				position.y - pxHeight / 2,
+				buildingId,
+				0,
+			);
 
-			// Store as top-left (center - half dimensions)
 			pushSnapshot();
 			addBuilding(
 				buildingId,
-				position.x / PIXELS_PER_METER - width / 2,
-				position.y / PIXELS_PER_METER - length / 2,
+				snapped.x / PIXELS_PER_METER,
+				snapped.y / PIXELS_PER_METER,
 			);
 		},
-		[screenToFlowPosition, gridSnapSize, pushSnapshot, addBuilding],
+		[screenToFlowPosition, snapToHandleGrid, pushSnapshot, addBuilding],
 	);
 
 	// --- Clear focus on drag so panel doesn't show during/after drag ---
@@ -335,33 +379,24 @@ export default function FlowEditor() {
 		[setFocusedInstance],
 	);
 
-	// --- Sync drag position back to store (center → top-left) ---
+	// --- Sync drag position back to store (already top-left, already snapped by onNodesChange) ---
 	const onNodeDragStop: OnNodeDrag = useCallback(
 		(_event, node) => {
-			const building = buildings[node.id];
-			if (!building) return;
-			const def = getBuildingDef(building.buildingId);
-			const { width, length } = def
-				? getRotatedSize(def, building.rotation)
-				: { width: 0, length: 0 };
-
 			isSyncingRef.current = true;
 			pushSnapshot();
 			moveBuilding(
 				node.id,
-				node.position.x / PIXELS_PER_METER - width / 2,
-				node.position.y / PIXELS_PER_METER - length / 2,
+				node.position.x / PIXELS_PER_METER,
+				node.position.y / PIXELS_PER_METER,
 			);
-			// Allow next frame to re-enable sync
 			requestAnimationFrame(() => {
 				isSyncingRef.current = false;
 			});
-			// Keep dragging flag a bit longer to suppress focus from onSelectionChange
 			setTimeout(() => {
 				isDraggingRef.current = false;
 			}, 100);
 		},
-		[buildings, pushSnapshot, moveBuilding],
+		[pushSnapshot, moveBuilding],
 	);
 
 	// --- Handle node deletion ---
@@ -496,20 +531,20 @@ export default function FlowEditor() {
 
 			const { flowPosition, sourceNodeId, sourcePortId, portType, portDirection } = connectDropState;
 
-			// Snap to grid
-			const snapPx = gridSnapSize * PIXELS_PER_METER;
-			const snappedX = Math.round(flowPosition.x / snapPx) * snapPx;
-			const snappedY = Math.round(flowPosition.y / snapPx) * snapPx;
-
-			// Convert to top-left for store (center - half dims)
-			const width = def.width;
-			const length = def.length;
+			const pxWidth = def.width * PIXELS_PER_METER;
+			const pxHeight = def.length * PIXELS_PER_METER;
+			const snapped = snapToHandleGrid(
+				flowPosition.x - pxWidth / 2,
+				flowPosition.y - pxHeight / 2,
+				buildingId,
+				0,
+			);
 
 			pushSnapshot();
 			const newInstanceId = addBuilding(
 				buildingId,
-				snappedX / PIXELS_PER_METER - width / 2,
-				snappedY / PIXELS_PER_METER - length / 2,
+				snapped.x / PIXELS_PER_METER,
+				snapped.y / PIXELS_PER_METER,
 			);
 
 			// Find the first compatible port on the new building
@@ -528,7 +563,7 @@ export default function FlowEditor() {
 
 			setConnectDropState(null);
 		},
-		[connectDropState, gridSnapSize, pushSnapshot, addBuilding, addConnection],
+		[connectDropState, snapToHandleGrid, pushSnapshot, addBuilding, addConnection],
 	);
 
 	// --- Handle quick-add building at viewport center ---
@@ -544,27 +579,26 @@ export default function FlowEditor() {
 			const centerY = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
 			const flowPos = screenToFlowPosition({ x: centerX, y: centerY });
 
-			// Snap to grid
-			const snapPx = gridSnapSize * PIXELS_PER_METER;
-			const snappedX = Math.round(flowPos.x / snapPx) * snapPx;
-			const snappedY = Math.round(flowPos.y / snapPx) * snapPx;
+			const pxWidth = def.width * PIXELS_PER_METER;
+			const pxHeight = def.length * PIXELS_PER_METER;
+			const snapped = snapToHandleGrid(
+				flowPos.x - pxWidth / 2,
+				flowPos.y - pxHeight / 2,
+				buildingId,
+				0,
+			);
 
 			pushSnapshot();
 			addBuilding(
 				buildingId,
-				snappedX / PIXELS_PER_METER - def.width / 2,
-				snappedY / PIXELS_PER_METER - def.length / 2,
+				snapped.x / PIXELS_PER_METER,
+				snapped.y / PIXELS_PER_METER,
 			);
 
 			setQuickAddOpen(false);
 		},
-		[gridSnapSize, pushSnapshot, addBuilding, screenToFlowPosition],
+		[snapToHandleGrid, pushSnapshot, addBuilding, screenToFlowPosition],
 	);
-
-	const snapGrid: [number, number] = [
-		gridSnapSize * PIXELS_PER_METER,
-		gridSnapSize * PIXELS_PER_METER,
-	];
 
 	return (
 		<FlowAnalysisContext.Provider value={analysis}>
@@ -587,9 +621,6 @@ export default function FlowEditor() {
 				onEdgesDelete={onEdgesDelete}
 				onNodeClick={onNodeClick}
 				onSelectionChange={onSelectionChange}
-				nodeOrigin={[0.5, 0.5]}
-				snapToGrid
-				snapGrid={snapGrid}
 				defaultEdgeOptions={defaultEdgeOptions}
 				deleteKeyCode={["Delete", "Backspace"]}
 				multiSelectionKeyCode="Shift"

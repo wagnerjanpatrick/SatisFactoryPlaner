@@ -32,3 +32,6 @@
 - [ ] Recipe icons on nodes
 - [ ] Satisfactory Update 1.0+ data
 - [ ] Mod support
+- [ ] save / load / share
+- [ ] access control
+- [ ] planner marketplace 

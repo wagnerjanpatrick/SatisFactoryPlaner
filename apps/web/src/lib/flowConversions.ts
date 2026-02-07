@@ -5,8 +5,8 @@ import { getRotatedSize } from "./geometry";
 import { PIXELS_PER_METER } from "./constants";
 
 /**
- * Convert a PlacedBuilding (top-left position) to a React Flow node (center position).
- * nodeOrigin={[0.5, 0.5]} means React Flow treats node.position as the center.
+ * Convert a PlacedBuilding (top-left in meters) to a React Flow node (top-left in pixels).
+ * nodeOrigin defaults to [0, 0] so position IS the top-left corner.
  */
 export function buildingToNode(building: PlacedBuilding): BuildingNode {
 	const def = getBuildingDef(building.buildingId);
@@ -14,13 +14,18 @@ export function buildingToNode(building: PlacedBuilding): BuildingNode {
 		? getRotatedSize(def, building.rotation)
 		: { width: 0, length: 0 };
 
+	const pxWidth = width * PIXELS_PER_METER;
+	const pxHeight = length * PIXELS_PER_METER;
+
 	return {
 		id: building.instanceId,
 		type: "building",
 		position: {
-			x: (building.x + width / 2) * PIXELS_PER_METER,
-			y: (building.y + length / 2) * PIXELS_PER_METER,
+			x: building.x * PIXELS_PER_METER,
+			y: building.y * PIXELS_PER_METER,
 		},
+		width: pxWidth,
+		height: pxHeight,
 		data: {
 			buildingId: building.buildingId,
 			rotation: building.rotation,
@@ -35,19 +40,14 @@ export function buildingToNode(building: PlacedBuilding): BuildingNode {
 }
 
 /**
- * Convert a React Flow node (center position) back to a PlacedBuilding (top-left position).
+ * Convert a React Flow node (top-left in pixels) back to a PlacedBuilding (top-left in meters).
  */
 export function nodeToBuilding(node: BuildingNode): PlacedBuilding {
-	const def = getBuildingDef(node.data.buildingId);
-	const { width, length } = def
-		? getRotatedSize(def, node.data.rotation)
-		: { width: 0, length: 0 };
-
 	return {
 		instanceId: node.id,
 		buildingId: node.data.buildingId,
-		x: node.position.x / PIXELS_PER_METER - width / 2,
-		y: node.position.y / PIXELS_PER_METER - length / 2,
+		x: node.position.x / PIXELS_PER_METER,
+		y: node.position.y / PIXELS_PER_METER,
 		rotation: node.data.rotation,
 		recipeId: node.data.recipeId,
 		overclockPercent: node.data.overclockPercent,
