@@ -22,6 +22,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@SatisFactoryPlaner/ui/components/select";
+import { Input } from "@SatisFactoryPlaner/ui/components/input";
 
 const POSITION_MAP = {
 	left: Position.Left,
@@ -43,6 +44,7 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 	const { deleteElements } = useReactFlow();
 	const setRecipe = useBuildingStore((s) => s.setRecipe);
 	const setOverclock = useBuildingStore((s) => s.setOverclock);
+	const setSomersloops = useBuildingStore((s) => s.setSomersloops);
 	const setSourceItem = useBuildingStore((s) => s.setSourceItem);
 	const setSourceRate = useBuildingStore((s) => s.setSourceRate);
 	const pushSnapshot = useHistoryStore((s) => s.pushSnapshot);
@@ -62,15 +64,14 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 	const isSource = def.category === "source";
 	const recipes = getRecipesForBuilding(data.buildingId);
 	const currentRecipe = data.recipeId ? getRecipe(data.recipeId) : null;
-	const fontSize = Math.max(8, Math.min(pxWidth * 0.12, pxHeight * 0.2, 14));
-	const hasPanel = recipes.length > 0 || def.canOverclock;
+	const hasControls = recipes.length > 0 || def.canOverclock || def.somersloopSlots > 0;
 
 	// Status styling
 	const statusStyle = nodeAnalysis ? STATUS_COLORS[nodeAnalysis.status] : undefined;
 
-	// Port rate map: recipe-based for production, sourceRate-based for sources
+	// Port rate + item map
 	const portRateMap = useMemo(() => {
-		if (!def) return {};
+		if (!def) return {} as Record<string, number>;
 		const map: Record<string, number> = {};
 		const mult = data.overclockPercent / 100;
 
@@ -100,11 +101,44 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 		return map;
 	}, [currentRecipe, def, data.overclockPercent, data.sourceRate, isSource]);
 
+	// Port-to-item name map
+	const portItemMap = useMemo(() => {
+		if (!def) return {} as Record<string, string>;
+		const map: Record<string, string> = {};
+
+		if (isSource && data.sourceItemId) {
+			const item = getItem(data.sourceItemId);
+			if (item) {
+				for (const port of def.ports.filter((p) => p.direction === "output")) {
+					map[port.id] = item.name;
+				}
+			}
+			return map;
+		}
+
+		if (!currentRecipe) return map;
+		const inputPorts = def.ports.filter((p) => p.direction === "input");
+		const outputPorts = def.ports.filter((p) => p.direction === "output");
+		currentRecipe.inputs.forEach((io, i) => {
+			if (inputPorts[i]) {
+				const item = getItem(io.itemId);
+				if (item) map[inputPorts[i].id] = item.name;
+			}
+		});
+		currentRecipe.outputs.forEach((io, i) => {
+			if (outputPorts[i]) {
+				const item = getItem(io.itemId);
+				if (item) map[outputPorts[i].id] = item.name;
+			}
+		});
+		return map;
+	}, [currentRecipe, def, isSource, data.sourceItemId]);
+
 	const onDelete = useCallback(() => {
 		deleteElements({ nodes: [{ id }] });
 	}, [id, deleteElements]);
 
-	// Apply recipe to all selected buildings of the same type
+	// Recipe change (applies to all selected of same type)
 	const onRecipeChange = useCallback(
 		(value: string) => {
 			pushSnapshot();
@@ -121,12 +155,11 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 		[pushSnapshot, data.buildingId, setRecipe],
 	);
 
-	// Apply overclock to all selected buildings that support it
+	// Overclock slider (all selected)
 	const onOverclockChange = useCallback(
 		(values: number[]) => {
 			const v = values[0];
 			if (v === undefined) return;
-			pushSnapshot();
 			const allBuildings = useBuildingStore.getState().buildings;
 			const currentSelectedIds = useUIStore.getState().selectedInstanceIds;
 			for (const sid of currentSelectedIds) {
@@ -138,8 +171,42 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 				}
 			}
 		},
-		[pushSnapshot, setOverclock],
+		[setOverclock],
 	);
+
+	// Overclock number input (all selected)
+	const onOverclockInputChange = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			const v = Number.parseInt(e.target.value, 10);
+			if (Number.isNaN(v)) return;
+			const clamped = Math.max(1, Math.min(250, v));
+			const allBuildings = useBuildingStore.getState().buildings;
+			const currentSelectedIds = useUIStore.getState().selectedInstanceIds;
+			for (const sid of currentSelectedIds) {
+				const b = allBuildings[sid];
+				if (!b) continue;
+				const d = getBuildingDef(b.buildingId);
+				if (d?.canOverclock) {
+					setOverclock(sid, clamped);
+				}
+			}
+		},
+		[setOverclock],
+	);
+
+	// Somersloops number input
+	const onSomersloopsChange = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			const v = Number.parseInt(e.target.value, 10);
+			if (Number.isNaN(v)) return;
+			setSomersloops(id, Math.max(0, Math.min(def?.somersloopSlots ?? 0, v)));
+		},
+		[id, setSomersloops, def?.somersloopSlots],
+	);
+
+	const onInputBlur = useCallback(() => {
+		pushSnapshot();
+	}, [pushSnapshot]);
 
 	// Source node callbacks
 	const onSourceItemChange = useCallback(
@@ -161,14 +228,10 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 		[id, setSourceRate],
 	);
 
-	const onSourceRateBlur = useCallback(() => {
-		pushSnapshot();
-	}, [pushSnapshot]);
-
+	// Handles — absolute pixel positioning so controls don't shift handles
 	const handles = useMemo(() => {
 		if (!def) return null;
 
-		// Clip-path triangles pointing outward per side
 		const outputClip: Record<string, string> = {
 			right: "polygon(0 0, 100% 50%, 0 100%)",
 			left: "polygon(100% 0, 0 50%, 100% 100%)",
@@ -184,8 +247,8 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 			const isInput = port.direction === "input";
 
 			const offsetStyle: React.CSSProperties = isHorizontalEdge
-				? { left: `${effectiveOffset * 100}%` }
-				: { top: `${effectiveOffset * 100}%` };
+				? { left: `${effectiveOffset * pxWidth}px` }
+				: { top: `${effectiveOffset * pxHeight}px` };
 
 			const colorClass = port.type === "conveyor"
 				? isInput
@@ -195,33 +258,38 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 					? "!border-cyan-500 !bg-cyan-500/20 !rounded-sm"
 					: "!border-none !bg-cyan-500";
 
-			// Output handles: triangle shape, no border-radius
 			if (!isInput) {
 				Object.assign(offsetStyle, {
 					clipPath: outputClip[effectiveSide],
 				});
 			}
 
-			// Rate label position: inside the node near the handle
+			// Rate + item labels — positioned outside the node boundary, next to handles
 			const rate = portRateMap[port.id];
-			const labelStyle: React.CSSProperties = { position: "absolute", fontSize: 8 };
+			const itemName = portItemMap[port.id];
+			const labelStyle: React.CSSProperties = { position: "absolute", fontSize: 10, whiteSpace: "nowrap" };
 			if (effectiveSide === "left") {
-				labelStyle.left = 10;
-				labelStyle.top = `${effectiveOffset * 100}%`;
-				labelStyle.transform = "translateY(-50%)";
+				labelStyle.right = `${pxWidth}px`;
+				labelStyle.top = `${effectiveOffset * pxHeight}px`;
+				labelStyle.transform = "translate(-8px, -50%)";
+				labelStyle.textAlign = "right";
 			} else if (effectiveSide === "right") {
-				labelStyle.right = 10;
-				labelStyle.top = `${effectiveOffset * 100}%`;
-				labelStyle.transform = "translateY(-50%)";
+				labelStyle.left = `${pxWidth}px`;
+				labelStyle.top = `${effectiveOffset * pxHeight}px`;
+				labelStyle.transform = "translate(8px, -50%)";
 			} else if (effectiveSide === "top") {
-				labelStyle.left = `${effectiveOffset * 100}%`;
-				labelStyle.top = 10;
-				labelStyle.transform = "translateX(-50%)";
+				labelStyle.left = `${effectiveOffset * pxWidth}px`;
+				labelStyle.top = 0;
+				labelStyle.transform = "translate(-50%, calc(-100% - 8px))";
+				labelStyle.textAlign = "center";
 			} else {
-				labelStyle.left = `${effectiveOffset * 100}%`;
-				labelStyle.bottom = 10;
-				labelStyle.transform = "translateX(-50%)";
+				labelStyle.left = `${effectiveOffset * pxWidth}px`;
+				labelStyle.top = `${pxHeight}px`;
+				labelStyle.transform = "translate(-50%, 8px)";
+				labelStyle.textAlign = "center";
 			}
+
+			const hasLabel = rate !== undefined || itemName;
 
 			return (
 				<Fragment key={port.id}>
@@ -236,24 +304,25 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 						)}
 						style={offsetStyle}
 					/>
-					{rate !== undefined && (
+					{hasLabel && (
 						<div
 							className="pointer-events-none select-none font-medium text-white/80"
 							style={labelStyle}
 						>
-							{rate}
+							{itemName && <div className="text-[8px] text-white/50">{itemName}</div>}
+							{rate !== undefined && <div>{rate}</div>}
 						</div>
 					)}
 				</Fragment>
 			);
 		});
-	}, [def, data.rotation, portRateMap]);
+	}, [def, data.rotation, portRateMap, portItemMap, pxWidth, pxHeight]);
 
 	// --- Source nodes ---
 	if (isSource) {
 		const sourceItem = data.sourceItemId ? getItem(data.sourceItemId) : null;
 		const sourceRate = data.sourceRate ?? 0;
-		const sourceFontSize = Math.max(6, Math.min(fontSize - 2, 10));
+		const sourceFontSize = Math.max(8, Math.min(14, pxWidth * 0.12));
 
 		// Filter items based on source type
 		const availableItems = useMemo(() => {
@@ -263,7 +332,7 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 			if (data.buildingId === "resource-well") {
 				return ITEMS.filter((i) => i.category === "fluid");
 			}
-			return ITEMS; // infinite-source gets all
+			return ITEMS;
 		}, [data.buildingId]);
 
 		return (
@@ -292,7 +361,7 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 					</span>
 					{sourceRate > 0 && (
 						<span
-							style={{ fontSize: Math.max(6, sourceFontSize - 2) }}
+							style={{ fontSize: Math.max(8, sourceFontSize - 2) }}
 							className="text-white/50 select-none"
 						>
 							{sourceRate}/min
@@ -309,17 +378,17 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 					</button>
 				)}
 
-				{/* Source config panel */}
+				{/* Source config — floating panel */}
 				{selected && isFocused && !dragging && (
 					<div
 						className="nodrag nopan absolute z-20 left-1/2 -translate-x-1/2 rounded-lg border border-border bg-popover p-2 shadow-xl text-popover-foreground space-y-1.5"
-						style={{ top: pxHeight + 4, minWidth: 180 }}
+						style={{ top: pxHeight + 8, minWidth: 200 }}
 					>
 						<Select
 							value={data.sourceItemId ?? "__none__"}
 							onValueChange={onSourceItemChange}
 						>
-							<SelectTrigger className="h-6 w-full text-[10px]">
+							<SelectTrigger className="nodrag h-7 w-full text-[11px]">
 								<SelectValue placeholder="Select item" />
 							</SelectTrigger>
 							<SelectContent>
@@ -332,23 +401,33 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 							</SelectContent>
 						</Select>
 						<div className="flex items-center gap-1.5">
-							<input
+							<Input
 								type="number"
 								min={0}
 								step={1}
 								value={sourceRate || ""}
 								onChange={onSourceRateChange}
-								onBlur={onSourceRateBlur}
+								onBlur={onInputBlur}
 								placeholder="0"
-								className="nodrag h-6 w-full rounded border border-border bg-background px-2 text-[10px] text-foreground outline-none focus:border-ring"
+								className="nodrag !h-7 w-full !px-2 !text-[11px]"
 							/>
-							<span className="shrink-0 text-[10px] text-muted-foreground">/min</span>
+							<span className="shrink-0 text-[11px] text-white/50">/min</span>
 						</div>
 						{def.canOverclock && (
-							<div className="space-y-0.5">
-								<span className="text-[9px] text-muted-foreground">
-									Overclock: {data.overclockPercent}%
-								</span>
+							<div className="space-y-1">
+								<div className="flex items-center gap-1">
+									<span className="text-[10px] text-white/50 shrink-0">Clock Speed:</span>
+									<Input
+										type="number"
+										min={1}
+										max={250}
+										value={data.overclockPercent}
+										onChange={onOverclockInputChange}
+										onBlur={onInputBlur}
+										className="nodrag !h-5 w-14 !px-1 !text-[11px] text-center"
+									/>
+									<span className="text-[10px] text-white/50">%</span>
+								</div>
 								<Slider
 									min={1}
 									max={250}
@@ -367,7 +446,7 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 		);
 	}
 
-	const rateFontSize = Math.max(6, Math.min(fontSize - 3, 9));
+	const hasAdvanced = def.canOverclock || def.somersloopSlots > 0;
 
 	// --- Regular buildings ---
 	return (
@@ -385,80 +464,75 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 					boxShadow: statusStyle?.shadow,
 				}}
 			>
-				{/* Name */}
+				{/* Name header */}
 				<div
-					className="w-full shrink-0 px-1 py-0.5 text-center"
+					className="w-full shrink-0 px-2 py-1 text-center"
 					style={{ backgroundColor: `${def.color}55` }}
 				>
-					<span
-						style={{ fontSize }}
-						className="leading-tight select-none font-semibold text-white drop-shadow-sm"
-					>
+					<span className="text-[13px] leading-tight select-none font-semibold text-white drop-shadow-sm">
 						{def.name}
 					</span>
 				</div>
-				{/* Recipe name */}
-				<div className="flex-1 flex items-center justify-center px-1">
-					{currentRecipe ? (
-						<span
-							style={{ fontSize: rateFontSize }}
-							className="text-center text-white/60 select-none leading-tight"
-						>
-							{currentRecipe.name}
-						</span>
-					) : recipes.length > 0 ? (
-						<span
-							style={{ fontSize: rateFontSize }}
-							className="text-center text-white/40 select-none"
-						>
-							No recipe
-						</span>
-					) : null}
-				</div>
-			</BaseNode>
 
-			{/* Delete button on selection */}
-			{selected && (
-				<button
-					type="button"
-					onClick={onDelete}
-					className="nodrag nopan absolute -top-2 -right-2 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/80 transition"
-				>
-					<Trash2 size={10} />
-				</button>
-			)}
-
-			{/* Selection panel: recipe + overclock (only on focused node, hidden while dragging) */}
-			{selected && isFocused && !dragging && hasPanel && (
-				<div
-					className="nodrag nopan absolute z-20 left-1/2 -translate-x-1/2 rounded-lg border border-border bg-popover p-2 shadow-xl text-popover-foreground space-y-1.5"
-					style={{ top: pxHeight + 4, minWidth: Math.max(pxWidth, 160) }}
-				>
-					{recipes.length > 0 && (
+				{/* Recipe selector */}
+				{recipes.length > 0 && (
+					<div className="nodrag nopan shrink-0 px-2 pt-1">
 						<Select
 							value={data.recipeId ?? "__none__"}
 							onValueChange={onRecipeChange}
 						>
-							<SelectTrigger className="h-6 w-full text-[10px]">
-								<SelectValue placeholder="No recipe" />
+							<SelectTrigger className="nodrag h-6 w-full text-[10px]">
+								<SelectValue placeholder="Select Recipe" />
 							</SelectTrigger>
 							<SelectContent>
 								<SelectItem value="__none__">No recipe</SelectItem>
 								{recipes.map((r) => (
 									<SelectItem key={r.id} value={r.id}>
-										{r.name}
-										{r.isAlternate ? " (Alt)" : ""}
+										{r.name}{r.isAlternate ? " (Alt)" : ""}
 									</SelectItem>
 								))}
 							</SelectContent>
 						</Select>
-					)}
+					</div>
+				)}
 
-					{def.canOverclock && (
-						<div className="space-y-0.5">
-							<span className="text-[9px] text-muted-foreground">
-								Overclock: {data.overclockPercent}%
-							</span>
+				{/* Clock speed + somersloops — single row */}
+				{hasAdvanced && (
+					<div className="nodrag nopan shrink-0 px-2 pt-1 space-y-0.5">
+						<div className="flex items-center gap-1">
+							{def.canOverclock && (
+								<>
+									<span className="text-[9px] text-white/50 shrink-0">Clock:</span>
+									<Input
+										type="number"
+										min={1}
+										max={250}
+										value={data.overclockPercent}
+										onChange={onOverclockInputChange}
+										onBlur={onInputBlur}
+										className="nodrag !h-5 w-10 min-w-0 !px-1 !text-[9px] text-center"
+									/>
+									<span className="text-[9px] text-white/50">%</span>
+								</>
+							)}
+							{def.somersloopSlots > 0 && (
+								<>
+									<span style={{ color: "#e879f9" }} className="text-[9px] leading-none ml-1">&#x25C6;</span>
+									<Input
+										type="number"
+										min={0}
+										max={def.somersloopSlots}
+										value={data.somersloops}
+										onChange={onSomersloopsChange}
+										onBlur={onInputBlur}
+										className="nodrag !h-5 w-7 min-w-0 !px-0.5 !text-[9px] text-center"
+									/>
+									<span className="text-[9px] text-white/50">/{def.somersloopSlots}</span>
+								</>
+							)}
+						</div>
+						{/* Slider only when node is large enough in both dimensions */}
+						{def.canOverclock && Math.min(pxWidth, pxHeight) >= 130 && (
 							<Slider
 								min={1}
 								max={250}
@@ -467,9 +541,20 @@ function BuildingNodeComponent({ id, data, selected, dragging }: NodeProps<Build
 								onValueChange={onOverclockChange}
 								className="nodrag"
 							/>
-						</div>
-					)}
-				</div>
+						)}
+					</div>
+				)}
+			</BaseNode>
+
+			{/* Delete button */}
+			{selected && (
+				<button
+					type="button"
+					onClick={onDelete}
+					className="nodrag nopan absolute -top-2 -right-2 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/80 transition"
+				>
+					<Trash2 size={10} />
+				</button>
 			)}
 
 			{handles}

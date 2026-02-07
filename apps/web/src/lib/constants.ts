@@ -1,6 +1,6 @@
 export const GRID_SIZE = 8; // 8m foundation grid
 export const SUB_GRID = 1; // 1m sub-grid
-export const PIXELS_PER_METER = 10; // scale factor for canvas
+export const PIXELS_PER_METER = 20; // scale factor for canvas
 
 export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 5;
